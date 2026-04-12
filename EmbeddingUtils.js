@@ -15,84 +15,192 @@ async function _sendBatch(batchTexts, config, batchNumber) {
     const { default: fetch } = await import('node-fetch');
     const retryAttempts = 3;
     const baseDelay = 1000;
+    // 兼容两种环境变量名：GOOGLE_API_KEY 或 GEMINI_API_KEY
+    const googleApiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
+    const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
 
-    for (let attempt = 1; attempt <= retryAttempts; attempt++) {
-        try {
-            const requestUrl = `${config.apiUrl}/v1/embeddings`;
-            const requestBody = { model: config.model, input: batchTexts };
-            const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` };
+    // 调试日志：检查配置
+    console.log(`[Embedding] Batch ${batchNumber}: model="${config.model}", GOOGLE_API_KEY=${googleApiKey ? 'present (' + googleApiKey.substring(0, 10) + '...)' : 'missing'}`);
 
-            const response = await fetch(requestUrl, {
-                method: 'POST',
-                headers: requestHeaders,
-                body: JSON.stringify(requestBody)
-            });
+    // 检查是否使用 Gemini API
+    if (googleApiKey && config.model.includes('gemini-embedding')) {
+        console.log(`[Embedding] Batch ${batchNumber}: Using direct Google API call`);
+        // Gemini API 一次只能处理一个文本，所以需要逐个处理
+        const embeddings = [];
+        
+        for (let i = 0; i < batchTexts.length; i++) {
+            const text = batchTexts[i];
+            
+            for (let attempt = 1; attempt <= retryAttempts; attempt++) {
+                try {
+                    // 为每个文本单独调用 Gemini API
+                    const requestUrl = `https://generativelanguage.googleapis.com/v1beta/models/${config.model}:embedContent?key=${googleApiKey}`;
+                    const requestBody = {
+                        content: {
+                            parts: [{ text }]
+                        }
+                    };
+                    const requestHeaders = { 'Content-Type': 'application/json' };
+                    const fetchOptions = {
+                        method: 'POST',
+                        headers: requestHeaders,
+                        body: JSON.stringify(requestBody)
+                    };
+                    
+                    // 添加代理设置
+                    if (proxy) {
+                        fetchOptions.agent = new (require('https-proxy-agent'))(proxy);
+                    }
 
-            const responseBodyText = await response.text();
+                    const response = await fetch(requestUrl, fetchOptions);
+                    const responseBodyText = await response.text();
 
-            if (!response.ok) {
-                if (response.status === 429) {
-                    // 429 限流时，增加等待时间
-                    const waitTime = 5000 * attempt;
-                    console.warn(`[Embedding] Batch ${batchNumber} rate limited (429). Retrying in ${waitTime / 1000}s...`);
-                    await new Promise(r => setTimeout(r, waitTime));
-                    continue;
+                    if (!response.ok) {
+                        if (response.status === 429) {
+                            // 429 限流时，增加等待时间
+                            const waitTime = 5000 * attempt;
+                            console.warn(`[Embedding] Text ${i + 1} in Batch ${batchNumber} rate limited (429). Retrying in ${waitTime / 1000}s...`);
+                            await new Promise(r => setTimeout(r, waitTime));
+                            continue;
+                        }
+                        throw new Error(`API Error ${response.status}: ${responseBodyText.substring(0, 500)}`);
+                    }
+
+                    let data;
+                    try {
+                        data = JSON.parse(responseBodyText);
+                    } catch (parseError) {
+                        console.error(`[Embedding] JSON Parse Error for Text ${i + 1} in Batch ${batchNumber}:`);
+                        console.error(`Response (first 500 chars): ${responseBodyText.substring(0, 500)}`);
+                        throw new Error(`Failed to parse API response as JSON: ${parseError.message}`);
+                    }
+
+                    // 增强的响应结构验证和详细错误信息
+                    if (!data) {
+                        throw new Error(`API returned empty/null response`);
+                    }
+
+                    // 检查是否是错误响应
+                    if (data.error) {
+                        const errorMsg = data.error.message || JSON.stringify(data.error);
+                        const errorCode = data.error.code || response.status;
+                        console.error(`[Embedding] API Error for Text ${i + 1} in Batch ${batchNumber}:`);
+                        console.error(`  Error Code: ${errorCode}`);
+                        console.error(`  Error Message: ${errorMsg}`);
+                        console.error(`  Hint: Check if embedding model "${config.model}" is available on your API server`);
+                        throw new Error(`API Error ${errorCode}: ${errorMsg}`);
+                    }
+
+                    // Gemini API 响应格式
+                    if (!data.embedding || !data.embedding.values) {
+                        console.error(`[Embedding] Missing 'embedding.values' field in Gemini API response for Text ${i + 1} in Batch ${batchNumber}`);
+                        console.error(`Response keys: ${Object.keys(data).join(', ')}`);
+                        console.error(`Response preview: ${JSON.stringify(data).substring(0, 500)}`);
+                        throw new Error(`Invalid Gemini API response structure: missing 'embedding.values' field`);
+                    }
+                    
+                    if (!Array.isArray(data.embedding.values)) {
+                        console.error(`[Embedding] 'embedding.values' is not an array for Text ${i + 1} in Batch ${batchNumber}`);
+                        console.error(`type: ${typeof data.embedding.values}`);
+                        console.error(`value: ${JSON.stringify(data.embedding.values).substring(0, 200)}`);
+                        throw new Error(`Invalid Gemini API response structure: 'embedding.values' is not an array`);
+                    }
+                    
+                    embeddings.push(data.embedding.values);
+                    break; // 成功，跳出重试循环
+                    
+                } catch (e) {
+                    console.warn(`[Embedding] Text ${i + 1} in Batch ${batchNumber}, Attempt ${attempt} failed: ${e.message}`);
+                    if (attempt === retryAttempts) {
+                        embeddings.push(null); // 失败，添加 null
+                    } else {
+                        await new Promise(r => setTimeout(r, baseDelay * Math.pow(2, attempt)));
+                    }
                 }
-                throw new Error(`API Error ${response.status}: ${responseBodyText.substring(0, 500)}`);
             }
-
-            let data;
+        }
+        
+        return embeddings;
+    } else {
+        // 原有逻辑：批量处理
+        for (let attempt = 1; attempt <= retryAttempts; attempt++) {
             try {
-                data = JSON.parse(responseBodyText);
-            } catch (parseError) {
-                console.error(`[Embedding] JSON Parse Error for Batch ${batchNumber}:`);
-                console.error(`Response (first 500 chars): ${responseBodyText.substring(0, 500)}`);
-                throw new Error(`Failed to parse API response as JSON: ${parseError.message}`);
+                const requestUrl = `${config.apiUrl}/v1/embeddings`;
+                const requestBody = { model: config.model, input: batchTexts };
+                const requestHeaders = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` };
+
+                const response = await fetch(requestUrl, {
+                    method: 'POST',
+                    headers: requestHeaders,
+                    body: JSON.stringify(requestBody)
+                });
+
+                const responseBodyText = await response.text();
+
+                if (!response.ok) {
+                    if (response.status === 429) {
+                        // 429 限流时，增加等待时间
+                        const waitTime = 5000 * attempt;
+                        console.warn(`[Embedding] Batch ${batchNumber} rate limited (429). Retrying in ${waitTime / 1000}s...`);
+                        await new Promise(r => setTimeout(r, waitTime));
+                        continue;
+                    }
+                    throw new Error(`API Error ${response.status}: ${responseBodyText.substring(0, 500)}`);
+                }
+
+                let data;
+                try {
+                    data = JSON.parse(responseBodyText);
+                } catch (parseError) {
+                    console.error(`[Embedding] JSON Parse Error for Batch ${batchNumber}:`);
+                    console.error(`Response (first 500 chars): ${responseBodyText.substring(0, 500)}`);
+                    throw new Error(`Failed to parse API response as JSON: ${parseError.message}`);
+                }
+
+                // 增强的响应结构验证和详细错误信息
+                if (!data) {
+                    throw new Error(`API returned empty/null response`);
+                }
+
+                // 检查是否是错误响应
+                if (data.error) {
+                    const errorMsg = data.error.message || JSON.stringify(data.error);
+                    const errorCode = data.error.code || response.status;
+                    console.error(`[Embedding] API Error for Batch ${batchNumber}:`);
+                    console.error(`  Error Code: ${errorCode}`);
+                    console.error(`  Error Message: ${errorMsg}`);
+                    console.error(`  Hint: Check if embedding model "${config.model}" is available on your API server`);
+                    throw new Error(`API Error ${errorCode}: ${errorMsg}`);
+                }
+
+                if (!data.data) {
+                    console.error(`[Embedding] Missing 'data' field in response for Batch ${batchNumber}`);
+                    console.error(`Response keys: ${Object.keys(data).join(', ')}`);
+                    console.error(`Response preview: ${JSON.stringify(data).substring(0, 500)}`);
+                    throw new Error(`Invalid API response structure: missing 'data' field`);
+                }
+
+                if (!Array.isArray(data.data)) {
+                    console.error(`[Embedding] 'data' field is not an array for Batch ${batchNumber}`);
+                    console.error(`data type: ${typeof data.data}`);
+                    console.error(`data value: ${JSON.stringify(data.data).substring(0, 200)}`);
+                    throw new Error(`Invalid API response structure: 'data' is not an array`);
+                }
+
+                if (data.data.length === 0) {
+                    console.warn(`[Embedding] Warning: Batch ${batchNumber} returned empty embeddings array`);
+                }
+
+                // 简单的 Log，证明并发正在跑
+                // console.log(`[Embedding] ✅ Batch ${batchNumber} completed (${batchTexts.length} items).`);
+
+                return data.data.sort((a, b) => a.index - b.index).map(item => item.embedding);
+
+            } catch (e) {
+                console.warn(`[Embedding] Batch ${batchNumber}, Attempt ${attempt} failed: ${e.message}`);
+                if (attempt === retryAttempts) throw e;
+                await new Promise(r => setTimeout(r, baseDelay * Math.pow(2, attempt)));
             }
-
-            // 增强的响应结构验证和详细错误信息
-            if (!data) {
-                throw new Error(`API returned empty/null response`);
-            }
-
-            // 检查是否是错误响应
-            if (data.error) {
-                const errorMsg = data.error.message || JSON.stringify(data.error);
-                const errorCode = data.error.code || response.status;
-                console.error(`[Embedding] API Error for Batch ${batchNumber}:`);
-                console.error(`  Error Code: ${errorCode}`);
-                console.error(`  Error Message: ${errorMsg}`);
-                console.error(`  Hint: Check if embedding model "${config.model}" is available on your API server`);
-                throw new Error(`API Error ${errorCode}: ${errorMsg}`);
-            }
-
-            if (!data.data) {
-                console.error(`[Embedding] Missing 'data' field in response for Batch ${batchNumber}`);
-                console.error(`Response keys: ${Object.keys(data).join(', ')}`);
-                console.error(`Response preview: ${JSON.stringify(data).substring(0, 500)}`);
-                throw new Error(`Invalid API response structure: missing 'data' field`);
-            }
-
-            if (!Array.isArray(data.data)) {
-                console.error(`[Embedding] 'data' field is not an array for Batch ${batchNumber}`);
-                console.error(`data type: ${typeof data.data}`);
-                console.error(`data value: ${JSON.stringify(data.data).substring(0, 200)}`);
-                throw new Error(`Invalid API response structure: 'data' is not an array`);
-            }
-
-            if (data.data.length === 0) {
-                console.warn(`[Embedding] Warning: Batch ${batchNumber} returned empty embeddings array`);
-            }
-
-            // 简单的 Log，证明并发正在跑
-            // console.log(`[Embedding] ✅ Batch ${batchNumber} completed (${batchTexts.length} items).`);
-
-            return data.data.sort((a, b) => a.index - b.index).map(item => item.embedding);
-
-        } catch (e) {
-            console.warn(`[Embedding] Batch ${batchNumber}, Attempt ${attempt} failed: ${e.message}`);
-            if (attempt === retryAttempts) throw e;
-            await new Promise(r => setTimeout(r, baseDelay * Math.pow(2, attempt)));
         }
     }
 }

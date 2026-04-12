@@ -3223,7 +3223,7 @@ class RAGDiaryPlugin {
         }
 
         const apiKey = process.env.API_Key;
-        const apiUrl = process.env.API_URL;
+        const apiUrl = process.env.EMBEDDING_API_URL || process.env.API_URL;
         const embeddingModel = process.env.WhitelistEmbeddingModel;
 
         if (!apiKey || !apiUrl || !embeddingModel) {
@@ -3360,7 +3360,7 @@ class RAGDiaryPlugin {
         if (!texts || !Array.isArray(texts) || texts.length === 0) return [];
 
         const apiKey = process.env.API_Key;
-        const apiUrl = process.env.API_URL;
+        const apiUrl = process.env.EMBEDDING_API_URL || process.env.API_URL;
         const embeddingModel = process.env.WhitelistEmbeddingModel;
 
         if (!apiKey || !apiUrl || !embeddingModel) {

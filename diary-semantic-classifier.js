@@ -43,8 +43,8 @@ const config = {
     dbName: 'knowledge_base.sqlite',
     dimension: parseInt(process.env.VECTORDB_DIMENSION) || 3072,
     apiKey: process.env.API_Key,
-    apiUrl: process.env.API_URL,
-    model: process.env.WhitelistEmbeddingModel || 'google/gemini-embedding-001'
+    apiUrl: process.env.EMBEDDING_API_URL || process.env.API_URL,
+    model: process.env.WhitelistEmbeddingModel || 'gemini-embedding-2-preview'
 };
 
 // 命令行参数定义

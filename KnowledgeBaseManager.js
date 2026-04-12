@@ -29,8 +29,8 @@ class KnowledgeBaseManager {
             rootPath: config.rootPath || process.env.KNOWLEDGEBASE_ROOT_PATH || path.join(__dirname, 'dailynote'),
             storePath: config.storePath || process.env.KNOWLEDGEBASE_STORE_PATH || path.join(__dirname, 'VectorStore'),
             apiKey: process.env.API_Key,
-            apiUrl: process.env.API_URL,
-            model: process.env.WhitelistEmbeddingModel || 'google/gemini-embedding-001',
+            apiUrl: process.env.EMBEDDING_API_URL || process.env.API_URL,
+            model: process.env.WhitelistEmbeddingModel || 'gemini-embedding-2-preview',
             // ⚠️ 务必确认环境变量 VECTORDB_DIMENSION 与模型一致 (3-small通常为1536)
             dimension: parseInt(process.env.VECTORDB_DIMENSION) || 3072,
 
@@ -986,10 +986,14 @@ class KnowledgeBaseManager {
             const newTags = Array.from(newTagsSet);
             // 3. Embedding API Calls
             const embeddingConfig = { apiKey: this.config.apiKey, apiUrl: this.config.apiUrl, model: this.config.model };
+            
+            // 调试日志：确认 embedding 配置
+            console.log(`[KnowledgeBase] Embedding config: model="${embeddingConfig.model}", apiKey=${embeddingConfig.apiKey ? 'present' : 'missing'}, apiUrl=${embeddingConfig.apiUrl || 'N/A'}`);
 
             let chunkVectors = [];
             if (allChunksWithMeta.length > 0) {
                 const texts = allChunksWithMeta.map(i => i.text);
+                console.log(`[KnowledgeBase] Calling getEmbeddingsBatch with ${texts.length} texts, model: ${embeddingConfig.model}`);
                 chunkVectors = await getEmbeddingsBatch(texts, embeddingConfig);
                 // 🛡️ getEmbeddingsBatch 现在保证 chunkVectors.length === texts.length
                 // 失败/超长的位置为 null，后续写入 DB 时会跳过这些 null 向量
