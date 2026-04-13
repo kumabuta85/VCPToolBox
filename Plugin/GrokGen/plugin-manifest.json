@@ -1,0 +1,58 @@
+{
+  "manifestVersion": "1.0.0",
+  "name": "GrokGen",
+  "displayName": "Grok 图片生成器",
+  "version": "1.1.0",
+  "description": "通过 Grok API 使用 grok-4-image 模型生成高质量的图片。支持文生图和图生图。",
+  "author": "VCP",
+  "pluginType": "synchronous",
+  "entryPoint": {
+    "type": "nodejs",
+    "command": "node GrokGen.js"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 120000
+  },
+  "configSchema": {},
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "commandIdentifier": "GrokGenerateImage",
+        "description": "调用此工具通过 Grok API 的 grok-4-image 模型生成图片。支持文生图和图生图。请在您的回复中，使用以下精确格式来请求图片生成，确保所有参数值都用「始」和「末」准确包裹：\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」GrokGen「末」,\nprompt:「始」(必需) 用于图片生成的详细提示词，支持中文或英文。「末」,\nresolution:「始」(可选) 图片分辨率，可选值：「1024x1024」、「1536x1536」、「1024x1536」、「1536x1024」。默认：1024x1024「末」,\nimage_url:「始」(可选) 参考图片的 URL 或 Base64 编码 (data:image/...;base64,...)，用于图生图。「末」\n(可选参数：seed:「始」整数种子「末」 - 通常省略以使用随机种子)\n<<<[END_TOOL_REQUEST]>>>\n\n重要提示给 AI：\n当此工具执行完毕后，您将收到包含以下信息的结果：\n1. 生成图片的公开访问 URL。\n2. 图片在服务器上的存储相对路径 (例如：image/grokgen/图片名.png)。\n3. 图片的文件名。\n请在您的最终回复中，使用返回的【图片 URL】为用户生成一个 HTML 的 `<img>` 标签来直接展示图片，例如：`<img src=\"[此处填写图片 URL]\" alt=\"[此处可填写部分 prompt 作为描述]\" width=\"300\">`。请确保替换占位符，并可调整 `width` 属性（建议 200-500 像素）。同时，也可以附带图片的直接 URL 链接。",
+        "example": "```text\n// 示例 1：文生图 - 生成卡通猫咪\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」GrokGen「末」,\nprompt:「始」一只可爱的卡通猫咪，坐在彩虹上，蓝天白云，明亮的色彩，儿童插画风格。「末」,\nresolution:「始」1024x1024「末」\n<<<[END_TOOL_REQUEST]>>>\n\n// 示例 2：文生图 - 生成风景画\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」GrokGen「末」,\nprompt:「始」日落时分的海滩，金色的阳光洒在海面上，远处有帆船，宁静祥和。「末」,\nresolution:「始」1536x1024「末」\n<<<[END_TOOL_REQUEST]>>>\n\n// 示例 3：图生图 - 风格转换\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」GrokGen「末」,\nprompt:「始」将这张图片变成油画风格，保留原图的构图和主体。「末」,\nresolution:「始」1024x1024「末」,\nimage_url:「始」data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==「末」\n<<<[END_TOOL_REQUEST]>>>\n```"
+      }
+    ],
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "用于图片生成的详细提示词"
+        },
+        "resolution": {
+          "type": "string",
+          "enum": ["1024x1024", "1536x1536", "1024x1536", "1536x1024"],
+          "default": "1024x1024",
+          "description": "图片分辨率"
+        },
+        "image_url": {
+          "type": "string",
+          "description": "（可选）参考图片的 URL 或 Base64 编码，用于图生图"
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "（可选）参考图片数组，用于图生图（多模态消息格式）"
+        },
+        "seed": {
+          "type": "integer",
+          "description": "（可选）随机种子，用于复现结果"
+        }
+      },
+      "required": ["prompt"]
+    }
+  }
+}

@@ -12,7 +12,7 @@ size:「始」(可选) 该模型总像素固定，只能输入比例例如1:1，
 negative_prompt:「始」(可选) 模糊, 低质量, 变形，某些不希望出现的物体「末」,
 num_inference_steps:「始」(可选)默认8「末」
 
-## 2. 莱恩家的点歌台 (MusicController)
+## 2. kuma家的点歌台 (MusicController)
 用于控制服务器音乐播放。
 tool_name:「始」MusicController「末」,
 command:「始」playSong「末」,
